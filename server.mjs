@@ -20,7 +20,7 @@ export class PHP {
 		if (this._initPromise) return this._initPromise;
 
 		this._initPromise = setup({
-      locateFile(name) {
+		  locateFile(name) {
 				return fileURLToPath(new URL(`./php-container/wasm/php-web-wordpress.wasm`, import.meta.url));
 			},
 			onAbort: function (reason) {
@@ -85,7 +85,14 @@ class WP {
 		this.php = php;
 	}
 
-	async init() {
+  async init(urlString) {
+		const url = new URL(urlString);
+		this.HOSTNAME = url.hostname;
+		this.PORT = url.port ? url.port : url.protocol === 'https:' ? 443 : 80;
+		this.SCHEMA = (url.protocol||'').replace(':', '');
+		this.HOST = `${ this.HOSTNAME }:${ this.PORT }`;
+		this.ABSOLUTE_URL = `${ this.SCHEMA }://${ this.HOSTNAME }:${ this.PORT }`;
+
 		const result = await this.php.run(`<?php
 			${ this._setupErrorReportingCode() }
 			${ this._patchWordPressCode() }
@@ -99,17 +106,11 @@ class WP {
 				result.exitCode,
 			);
 		}
-	}
+		this.initialized = true;
+  }
 
-	async noteBrowserOrigin() {
-		const url = new URL( location.href );
-		this.HOSTNAME = url.hostname;
-		this.PORT = url.port || ( url.protocol === 'https:' ? 443 : 80 );
-		this.HOST = url.host;
-		this.ABSOLUTE_URL = url.origin;
-	}
-
-	async request( request ) {
+  async request(request) {
+		if (!this.initialized) throw new Error('call init() first');
 		const output = await this.php.run(`<?php	
 			${this._setupErrorReportingCode()}
 			${this._setupRequestCode(request)}
@@ -162,7 +163,8 @@ class WP {
 	}
 
 	_patchWordPressCode() {
-		return `	   
+		return `
+		  file_put_contents( "${ this.DOCROOT }/.absolute-url", "${ this.ABSOLUTE_URL }" );
 			if ( ! file_exists( "${ this.DOCROOT }/.wordpress-patched" ) ) {
 				touch("${ this.DOCROOT }/.wordpress-patched");
 				
@@ -182,21 +184,19 @@ class WP {
 				// For some reason, the in-browser WordPress doesn't respect the site
 				// URL preset during the installation. Also, it disables the block editing
 				// experience by default.
-				/*
 				file_put_contents(
 					'${ this.DOCROOT }/wp-includes/plugin.php',
 					file_get_contents('${ this.DOCROOT }/wp-includes/plugin.php') . "\n"
-					.'add_filter( "option_home", function($url) { return "${ this.ABSOLUTE_URL }"; }, 10000 );' . "\n"
-					.'add_filter( "option_siteurl", function($url) { return "${ this.ABSOLUTE_URL }"; }, 10000 );' . "\n"
+					.'add_filter( "option_home", function($url) { return file_get_contents("${ this.DOCROOT }/.absolute-url"); }, 10000 );' . "\n"
+					.'add_filter( "option_siteurl", function($url) { return file_get_contents("${ this.DOCROOT }/.absolute-url"); }, 10000 );' . "\n"
 				);
-				*/
 
 				// Activate the development plugin.
 				$file_php_path = '${ this.DOCROOT }/wp-includes/functions.php';
 				$file_php = file_get_contents($file_php_path);
 
 				if (strpos($file_php, "start-test-snippet") !== false) {
-					$file_php = substr($file_php, 0, strpos($file_php, "start-test-snippet"));
+					$file_php = substr($file_php, 0, strpos($file_php, "// start-test-snippet"));
 				}
 
 				$file_php .= <<<'ADMIN'
@@ -358,7 +358,6 @@ async function createBrowser() {
 	const php = new PHP();
 	await php.init();
 	const wp = new WP(php);
-	await wp.init();
 	const browser = new WPBrowser(wp);
 	return browser;
 }
@@ -371,27 +370,37 @@ app.use(cookieParser());
 app.use(bodyParser.urlencoded({ extended: true }));
 const port = 8777
 
-const browser = createBrowser();
+const browserPromise = createBrowser();
 app.all('*', async (req, res) => {
+  const browser = await browserPromise;
+  if (!browser.wp.initialized) {
+		await browser.wp.init(
+		  url.format({
+				protocol: req.protocol,
+				host: req.get('host'),
+				pathname: req.originalUrl
+		  })
+		);
+  }
   if (req.path.endsWith(".php") || req.path.endsWith("/")) {
-    const response = await (await browser).request(
-      req.url,
-      req.method,
-      req.body || {},
-      req.headers || {},
-      req.cookies || {}
-    );
-    for (const [key, value] of Object.entries(response.headers)) {
-      res.setHeader(key, value);
-    }
-    if ('location' in response.headers) {
-      res.status(302);
-      res.end();
-    } else {
-      res.send(response.body);
-    }
+		const response = await (await browser).request(
+		  req.url,
+		  req.method,
+		  req.body || {},
+		  req.headers || {},
+		  req.cookies || {}
+		);
+		for (const [key, value] of Object.entries(response.headers)) {
+		  res.setHeader(key, value);
+		}
+		if ('location' in response.headers) {
+		  res.status(302);
+		  res.end();
+		} else {
+		  res.send(response.body);
+		}
   } else {
-    res.sendFile(`${__dirname}/php-container/wordpress${req.path}`);
+		res.sendFile(`${__dirname}/php-container/wordpress${req.path}`);
   }
 });
 
