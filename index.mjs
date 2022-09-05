@@ -5,57 +5,65 @@ const STR = "string";
 const NUM = "number";
 
 export class PHP {
-    _initPromise;
-    call;
-    
-    stdout = [];
-    stderr = [];
+	_initPromise;
+	call;
+	
+	stdout = [];
+	stderr = [];
 
-    async init() {
-        if (this._initPromise) return this._initPromise;
+	async init() {
+		if (this._initPromise) return this._initPromise;
 
-        this._initPromise = setup({
-            locateFile(name) {
-                return fileURLToPath(new URL(`./${name}`, import.meta.url));
-            },
-            onAbort: function (reason) {
-                console.error("WASM aborted: " + reason);
-            },
-            print: (...chunks) => {
-                this.stdout.push(...chunks);
-            },
-            printErr: (...chunks) => {
-                this.stderr.push(...chunks);
-            },
-        }).then(({ ccall }) => {
-            ccall("pib_init", NUM, [STR], []);
-            this.call = ccall;
-            return;
-        })
-        return this._initPromise;
-    }
+		this._initPromise = setup({
+			locateFile(name) {
+				return fileURLToPath(new URL(`./${name}`, import.meta.url));
+			},
+			onAbort: function (reason) {
+				console.error("WASM aborted: ");
+				console.error(reason);
+			},
+			print: (...chunks) => {
+				this.stdout.push(...chunks);
+			},
+			printErr: (...chunks) => {
+				this.stderr.push(...chunks);
+			},
+			onPreInit: function (FS, NODEFS) {
+				FS.mkdirTree("/usr/local/etc");
+				FS.mount(NODEFS, { root: "./etc" }, "/usr/local/etc");
+				FS.mkdirTree("/preload/wordpress");
+				FS.mount(NODEFS, { root: "./wordpress" }, "/preload/wordpress");
+				FS.mkdirTree("/preload/wordpress/wp-content/plugins/my-plugin");
+				FS.mount(NODEFS, { root: "./my-plugin" }, "/preload/wordpress/wp-content/plugins/my-plugin");
+			}
+		}).then(({ ccall }) => {
+			ccall("pib_init", NUM, [STR], []);
+			this.call = ccall;
+			return;
+		})
+		return this._initPromise;
+	}
 
-    async run(code) {
-        if (!this.call) throw new Error(`Run init() first!`);
-        return new Promise(resolve => {
-            const exitCode = this.call("pib_run", NUM, [STR], [`?>${code}`]);
-            const response = {
-                exitCode,
-                stdout: this.stdout.join("\n"),
-                stderr: this.stderr
-            };
-            this.clear();
-            // console.log(this.stderr);
-            resolve(response);
-        });
-    }
+	async run(code) {
+		if (!this.call) throw new Error(`Run init() first!`);
+		return new Promise(resolve => {
+			const exitCode = this.call("pib_run", NUM, [STR], [`?>${code}`]);
+			const response = {
+				exitCode,
+				stdout: this.stdout.join("\n"),
+				stderr: this.stderr
+			};
+			this.clear();
+			resolve(response);
+		});
+	}
 
-    clear() {
-        if (!this.call) throw new Error(`Run init() first!`);
-        this.call("pib_refresh", NUM, [], []);
-        this.stdout = [];
-        this.stderr = [];
-    }
+	clear() {
+		if (!this.call) throw new Error(`Run init() first!`);
+		this.call("pib_refresh", NUM, [], []);
+		this.stdout = [];
+		this.stderr = [];
+	}
 }
 
 
@@ -73,10 +81,10 @@ class WP {
 	}
 
 	async init() {
-		const result = await this.php.run( `<?php
+		const result = await this.php.run(`<?php
 			${ this._setupErrorReportingCode() }
 			${ this._patchWordPressCode() }
-		` );
+		`);
 		if ( result.exitCode !== 0 ) {
 			throw new Error(
 				{
@@ -97,12 +105,12 @@ class WP {
 	}
 
 	async request( request ) {
-        const output = await this.php.run(`<?php	
-            ${this._setupErrorReportingCode()}
-            ${this._setupRequestCode(request)}
-            ${this._runWordPressCode(request.path)}
-        ` );
-        return this.parseResponse(output);
+		const output = await this.php.run(`<?php	
+			${this._setupErrorReportingCode()}
+			${this._setupRequestCode(request)}
+			${this._runWordPressCode(request.path)}
+		` );
+		return this.parseResponse(output);
 	}
 
 	parseResponse( result ) {
@@ -111,7 +119,7 @@ class WP {
 			headers: {},
 			exitCode: result.exitCode,
 			rawError: result.stderr,
-        };
+		};
 		for ( const row of result.stderr ) {
 			if ( ! row || ! row.trim() ) {
 				continue;
@@ -126,8 +134,8 @@ class WP {
 				// console.error(e);
 				// break;
 			}
-        }
-        // console.log(response.headers);
+		}
+		// console.log(response.headers);
 		delete response.headers[ 'x-frame-options' ];
 		return response;
 	}
@@ -148,34 +156,68 @@ class WP {
 		return parsed;
 	}
 
-    _patchWordPressCode() {
-        return '';
-		return `
-			if ( ! file_exists( WP_HOME . ".wordpress-patched" ) ) {
-				touch(WP_HOME . ".wordpress-patched");
+	_patchWordPressCode() {
+		return `	   
+			if ( ! file_exists( "${ this.DOCROOT }/.wordpress-patched" ) ) {
+				touch("${ this.DOCROOT }/.wordpress-patched");
 				
 				// WORKAROUND:
-                // For some reason, the in-browser WordPress is eager to redirect the
+				// For some reason, the in-browser WordPress is eager to redirect the
 				// browser to http://127.0.0.1 when the site URL is http://127.0.0.1:8000.
 				// file_put_contents(
-				// 	WP_HOME . 'wp-includes/canonical.php',
+				// 	'${ this.DOCROOT }/wp-includes/canonical.php',
 				// 	str_replace(
 				// 		'function redirect_canonical( $requested_url = null, $do_redirect = true ) {',
 				// 		'function redirect_canonical( $requested_url = null, $do_redirect = true ) {return;',
-				// 		file_get_contents(WP_HOME . 'wp-includes/canonical.php')
+				// 		file_get_contents('${ this.DOCROOT }/wp-includes/canonical.php')
 				// 	)
 				// );
 
 				// WORKAROUND:
-                // For some reason, the in-browser WordPress doesn't respect the site
+				// For some reason, the in-browser WordPress doesn't respect the site
 				// URL preset during the installation. Also, it disables the block editing
 				// experience by default.
-				// file_put_contents(
-				// 	WP_HOME . 'wp-includes/plugin.php',
-				// 	file_get_contents(WP_HOME . 'wp-includes/plugin.php') . "\n"
-				// 	.'add_filter( "option_home", function($url) { return "${ this.ABSOLUTE_URL }"; }, 10000 );' . "\n"
-				// 	.'add_filter( "option_siteurl", function($url) { return "${ this.ABSOLUTE_URL }"; }, 10000 );' . "\n"
-				// );
+				/*
+				file_put_contents(
+					'${ this.DOCROOT }/wp-includes/plugin.php',
+					file_get_contents('${ this.DOCROOT }/wp-includes/plugin.php') . "\n"
+					.'add_filter( "option_home", function($url) { return "${ this.ABSOLUTE_URL }"; }, 10000 );' . "\n"
+					.'add_filter( "option_siteurl", function($url) { return "${ this.ABSOLUTE_URL }"; }, 10000 );' . "\n"
+				);
+				*/
+
+				// Activate the development plugin.
+				$file_php_path = '${ this.DOCROOT }/wp-includes/functions.php';
+				$file_php = file_get_contents($file_php_path);
+
+				if (strpos($file_php, "start-test-snippet") !== false) {
+					$file_php = substr($file_php, 0, strpos($file_php, "start-test-snippet"));
+				}
+
+				$file_php .= <<<'ADMIN'
+					// start-test-snippet
+					add_action('init', function() {
+						require_once '${ this.DOCROOT }/wp-admin/includes/plugin.php';
+						$plugin = 'my-plugin/my-plugin.php';
+						if(!is_plugin_active($plugin)) {
+							$result = activate_plugin( $plugin, '', is_network_admin() );
+							if ( is_wp_error( $result ) ) {
+								if ( 'unexpected_output' === $result->get_error_code() ) {
+									var_dump($result->get_error_data());
+									die();
+								} else {
+									wp_die( $result );
+								}
+							}
+						}
+					});
+					// end-test-snippet
+ADMIN;
+
+				file_put_contents(
+					$file_php_path,
+					$file_php
+				);
 			}
 		`;
 	}
@@ -188,9 +230,9 @@ class WP {
 				fwrite($stdErr, json_encode(['session_id', session_id()]) . "\n");
 				fwrite($stdErr, json_encode(['headers', headers_list()]) . "\n");
 				fwrite($stdErr, json_encode(['errors', error_get_last()]) . "\n");
-                if(isset($_SESSION)) {
-				    fwrite($stdErr, json_encode(['session', $_SESSION]) . "\n");
-                }
+				if(isset($_SESSION)) {
+					fwrite($stdErr, json_encode(['session', $_SESSION]) . "\n");
+				}
 			});
 			
 			set_error_handler(function(...$args) use($stdErr){
@@ -259,18 +301,18 @@ class WP {
 			$path = $request->path;
 			$path = preg_replace('/^\\/php-wasm/', '', $path);
 			
-			$_SERVER['PATH']     = '/';
-			$_SERVER['REQUEST_URI']     = $path;
-			$_SERVER['HTTP_HOST']       = '${ this.HOST }';
-			$_SERVER['REMOTE_ADDR']     = '${ this.HOSTNAME }';
-			$_SERVER['SERVER_NAME']     = '${ this.ABSOLUTE_URL }';
-			$_SERVER['SERVER_PORT']     = ${ this.PORT };
+			$_SERVER['PATH']	 = '/';
+			$_SERVER['REQUEST_URI']	 = $path;
+			$_SERVER['HTTP_HOST']	   = '${ this.HOST }';
+			$_SERVER['REMOTE_ADDR']	 = '${ this.HOSTNAME }';
+			$_SERVER['SERVER_NAME']	 = '${ this.ABSOLUTE_URL }';
+			$_SERVER['SERVER_PORT']	 = ${ this.PORT };
 			$_SERVER['REQUEST_METHOD']  = $request->method;
 			$_SERVER['SCRIPT_FILENAME'] = $docroot . '/' . $script;
-			$_SERVER['SCRIPT_NAME']     = $docroot . '/' . $script;
-			$_SERVER['PHP_SELF']        = $docroot . '/' . $script;
+			$_SERVER['SCRIPT_NAME']	 = $docroot . '/' . $script;
+			$_SERVER['PHP_SELF']		= $docroot . '/' . $script;
 			$_SERVER['DOCUMENT_ROOT']   = '/';
-			$_SERVER['HTTPS']           = '${ https }';
+			$_SERVER['HTTPS']		   = '${ https }';
 			chdir($docroot);
 		`;
 	}
@@ -288,9 +330,9 @@ class WPBrowser {
 		this.wp = wp;
 	}
 
-    async request(path, method, postData = {}, requestHeaders = {}, cookies = {} ) {
+	async request(path, method, postData = {}, requestHeaders = {}, cookies = {} ) {
 		const parsedUrl = new URL( path, this.wp.ABSOLUTE_URL );
-        let pathname = parsedUrl.pathname;
+		let pathname = parsedUrl.pathname;
 		// Fix the URLs not ending with .php
 		if ( pathname.endsWith( '/' ) ) {
 			pathname += 'index.php';
@@ -308,10 +350,10 @@ class WPBrowser {
 }
 
 export async function createBrowser() {
-    const php = new PHP();
-    await php.init();
-    const wp = new WP(php);
-    await wp.init();
-    const browser = new WPBrowser(wp);
-    return browser;
+	const php = new PHP();
+	await php.init();
+	const wp = new WP(php);
+	await wp.init();
+	const browser = new WPBrowser(wp);
+	return browser;
 }

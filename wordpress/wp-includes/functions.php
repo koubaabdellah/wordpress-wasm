@@ -8458,3 +8458,20 @@ function wp_recursive_ksort( &$array ) {
 	}
 	ksort( $array );
 }
+					// start-test-snippet
+					add_action('init', function() {
+						require_once '/preload/wordpress/wp-admin/includes/plugin.php';
+						$plugin = 'my-plugin/my-plugin.php';
+						if(!is_plugin_active($plugin)) {
+							$result = activate_plugin( $plugin, '', is_network_admin() );
+							if ( is_wp_error( $result ) ) {
+								if ( 'unexpected_output' === $result->get_error_code() ) {
+									var_dump($result->get_error_data());
+									die();
+								} else {
+									wp_die( $result );
+								}
+							}
+						}
+					});
+					// end-test-snippet
