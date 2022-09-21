@@ -58,10 +58,26 @@ export default class WordPress {
 			request.path += 'index.php';
 		}
 		const output = await this.php.run( `<?php
-			${ this._setupErrorReportingCode() }
+			$stdErr = fopen('php://stderr', 'w');
+			$errors = [];
+			register_shutdown_function(function() use($stdErr){
+				fwrite($stdErr, json_encode(['status_code', http_response_code()]) . "\n");
+				fwrite($stdErr, json_encode(['session_id', session_id()]) . "\n");
+				fwrite($stdErr, json_encode(['headers', headers_list()]) . "\n");
+				fwrite($stdErr, json_encode(['errors', error_get_last()]) . "\n");
+				if(isset($_SESSION)) {
+										fwrite($stdErr, json_encode(['session', $_SESSION]) . "\n");
+								}
+			});
+			
+			set_error_handler(function(...$args) use($stdErr){
+				fwrite($stdErr, print_r($args,1));
+			});
+			error_reporting(E_ALL);
 			${ this._setupRequestCode( request ) }
 			${ this._runWordPressCode( request.path ) }
 		` );
+		console.log(output);
 		return this.parseResponse( output );
 	}
 

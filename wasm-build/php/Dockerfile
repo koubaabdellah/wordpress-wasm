@@ -69,16 +69,44 @@ RUN cd libxml2 && emconfigure ./configure --with-http=no --with-ftp=no --with-py
 RUN cd libxml2 && emmake make
 RUN cd libxml2 && emmake make install
 
+RUN cd zlib && emconfigure ./configure --prefix=/root/lib/
+RUN cd zlib && emmake make
+RUN cd zlib && emmake make install
+
+# Get and build the emscripten zlib port.
+RUN cd /root && \
+    env GIT_SSL_NO_VERIFY=true git clone https://github.com/emscripten-ports/zlib.git \
+      --branch master \
+      --single-branch \
+      --depth 1
+RUN cd /root/zlib && \
+    emconfigure ./configure --prefix=/root/lib/ && \
+    emmake make && \
+    emmake make install
+
+# Get and build libzip
+RUN curl -k https://libzip.org/download/libzip-1.9.2.tar.gz -o libzip-1.9.2.tar.gz \
+    tar -xzvf libzip-1.9.2.tar.gz \
+
+RUN cd libzip-1.9.2 && \
+    mkdir build \
+    cd build \
+    emcmake cmake \
+      -DCMAKE_INSTALL_PREFIX=/root/lib \
+      -DZLIB_LIBRARY=/root/lib/lib/libz.a \
+      -DZLIB_INCLUDE_DIR=/root/lib/include/zlib \
+      --prefix=/root/lib/ .. \
+    emmake make \
+    emmake make install
+
 # Build the patched PHP
 RUN cd php7.4-src/ && PKG_CONFIG_PATH=$PKG_CONFIG_PATH ./buildconf --force
-
-# RUN ls /root/lib/lib/; sleep 50
-
-RUN cd php7.4-src/ && PKG_CONFIG_PATH=$PKG_CONFIG_PATH emconfigure ./configure \
+RUN cd php7.4-src/ && emconfigure ./configure \
     PKG_CONFIG_PATH=$PKG_CONFIG_PATH \
     --enable-embed=static \
     --with-layout=GNU  \
     --with-libxml      \
+    --with-zlib        \
     --disable-cgi      \
     --disable-cli      \
     --disable-all      \
@@ -103,17 +131,20 @@ RUN cd php7.4-src/ && PKG_CONFIG_PATH=$PKG_CONFIG_PATH emconfigure ./configure \
     --enable-vrzno     \
     --enable-xml       \
     --enable-simplexml \
-    --with-gd
+    --with-zip
 
 RUN cd php7.4-src/ && emmake make -j8
 
-RUN cp -v php7.4-src/.libs/libphp7.la php7.4-src/.libs/libphp7.a /root/lib/
+RUN cd .. && cp -v php7.4-src/.libs/libphp7.la php7.4-src/.libs/libphp7.a /root/lib/
 
-RUN cd php7.4-src/ && emcc -O3 \
+RUN cd php7.4-src/ && emcc -O2 \
     -I .     \
-    -I Zend  \
+    -I Zend \
+    -I ext/standard \
     -I main  \
     -I TSRM/ \
     -I /root/libxml2 \
+    -I /root/libzip \
+    /root/php7.4-src/ext/standard/{crypt*.c,php_crypt_r.c} \
     /root/pib_eval.c \
     -o /root/lib/pib_eval.o;

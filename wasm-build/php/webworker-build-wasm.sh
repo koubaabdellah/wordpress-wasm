@@ -1,7 +1,9 @@
 #!/bin/bash
 
-docker build . --tag=wasm-wordpress-php-builder
+set -e
 
+touch `pwd`/docker-output/node-php.js.mem
+docker build . --tag=wasm-wordpress-php-builder
 docker run \
         -v `pwd`/preload:/preload \
         -v `pwd`/docker-output:/output \
@@ -19,7 +21,6 @@ docker run \
         -s EXPORT_NAME="'PHP'"           \
         -s MODULARIZE=1                  \
         -s INVOKE_RUN=0                  \
-        -s USE_ZLIB=1                    \
                 /root/lib/pib_eval.o /root/lib/libphp7.a /root/lib/lib/libxml2.a \
         --pre-js /preload/webworker-pre-php.js \
         -s ENVIRONMENT=worker \

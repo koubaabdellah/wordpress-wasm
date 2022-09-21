@@ -34,6 +34,7 @@ export default async function command( argv ) {
 	} );
 
 	const browser = new WPBrowser( wp );
+
 	return await startExpressServer( browser, argv.port, {
 		mounts,
 		initialUrl: argv.initialUrl,

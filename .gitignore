@@ -6,3 +6,17 @@ wasm-build/php/docker-output/*
 wasm-build/wordpress-data/docker-output/*
 !wasm-build/wordpress-data/docker-output/.gitkeep
 wasm-build/wordpress-data/preload/wordpress*
+wasm-build/php/docker-build-files/zlib/*.wasm
+wasm-build/php/docker-build-files/zlib/*.js
+wasm-build/php/docker-build-files/zlib/*.a
+wasm-build/php/docker-build-files/zlib/*.o
+wasm-build/php/docker-build-files/zlib/*.so
+wasm-build/php/docker-build-files/zlib/*.lo
+wasm-build/php/docker-build-files/zlib/Makefile
+wasm-build/php/docker-build-files/zlib/example
+wasm-build/php/docker-build-files/zlib/example64
+wasm-build/php/docker-build-files/zlib/libz.so.1
+wasm-build/php/docker-build-files/zlib/libz.so.1.2.5
+wasm-build/php/docker-build-files/zlib/minigzip
+wasm-build/php/docker-build-files/zlib/minigzip64
+

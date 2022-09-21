@@ -20,6 +20,11 @@ export async function startExpressServer( browser, port, options = {} ) {
 	await browser.wp.init('http://localhost:9854', {
 		useFetchForRequests: true
 	});
+	const response = await browser.wp.request({
+		path: '/index.php'
+	});
+	console.log(response);
+	return;
 
 	const app = express();
 	app.use( cookieParser() );
